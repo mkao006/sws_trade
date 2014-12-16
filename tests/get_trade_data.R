@@ -192,13 +192,13 @@ calculateUnitValue = function(data, importUnitValue, importTradeValue,
     missingCol = setdiff(c(importUnitValue, importTradeValue, importTradeQuantity,
         exportUnitValue, exportUnitValue, exportTradeQuantity), colnames(data))
     if(length(missingCol) > 0)
-
         data[, `:=`(c(missingCol), as.numeric(NA))]
+    
     data[, `:=`(c(importUnitValue, exportUnitValue),
                 list(computeRatio(get(importTradeValue),
-                                  get(importTradeQuantity)) * 1000,
+                                  get(importTradeQuantity)),
                 computeRatio(get(exportTradeValue),
-                             get(exportTradeQuantity)) * 1000))]
+                             get(exportTradeQuantity))))]
     data
 }
 calculateUnitValue(cerealTrade, importUnitValue, importValue, importQuantity,
@@ -241,14 +241,14 @@ with(validationByMirrorValue(x, y, 30),
 
 
 validationByRange = function(value){
-    newValue = value
+    newValue = log(value)
     q = quantile(value, probs = c(0.25, 0.75), na.rm = TRUE)
     min = q[1] - 1.5 * diff(q)
     max = q[2] + 1.5 * diff(q)
     badValue = which(value > max | value < min)
     newValue[badValue] = median(newValue[-badValue], na.rm = TRUE)
     ## list(value = value, newValue = newValue)
-    newValue
+    exp(newValue)
 }
 
 validation = function(data, value, mirrorValue, pctTolerance = 50){
@@ -261,6 +261,79 @@ validation = function(data, value, mirrorValue, pctTolerance = 50){
     valid
 }
 
+
+
+calculateQuantity = function(data, unitValue, value, quantity){
+    updatedQuantity = copy(data)
+    updatedQuantity[!is.na(updatedQuantity[[quantity]]),
+                    `:=`(c(quantity), get(value)/get(unitValue))]
+    updatedQuantity    
+}
+
+
+calculateReliability = function(data, import, export, reverseImport,
+    reverseExport, reportingCountry, partnerCountry, pctTolerance){
+
+    reliability =
+        data[, (sum(abs(.SD[[import]] - .SD[[reverseExport]])/
+                        .SD[[import]] <= pctTolerance, na.rm = TRUE) +
+               (sum(abs(.SD[[export]] - .SD[[reverseImport]])/
+                        .SD[[export]] <= pctTolerance, na.rm = TRUE)))/
+                            (2 * .N),
+             by = reportingCountry]
+    setnames(reliability, old = "V1", new = "reportingReliability")
+    reportingReliability = merge(data, reliability, by = reportingCountry,
+                                 all.x = TRUE)
+    setnames(reliability, old = c(reportingCountry, "reportingReliability"),
+             new = c(partnerCountry, "partnerReliability"))
+    finalReliability = merge(reportingReliability, reliability,
+        by = partnerCountry, all.x = TRUE)
+    finalReliability
+}
+
+## reliabilityTrade = calculateReliability(mirroredTrade,
+##                      import = importQuantity,
+##                      export = exportQuantity,
+##                      reverseImport = paste0("reverse_", importQuantity),
+##                      reverseExport = paste0("reverse_", exportQuantity),
+##                      reportingCountry = "reportingCountryM49",
+##                      partnerCountry = "partnerCountryM49",
+##                      pctTolerance = 0.05)
+
+
+
+balanceTradeQuantity = function(data, import, export, reverseImport, reverseExport,
+    reportingReliability, partnerReliability, pctTolerance){
+    balanced = copy(data)
+    balanced[reportingReliability < partnerReliability &
+             (abs(balanced[[import]] - balanced[[reverseExport]])/
+                  balanced[[import]] > pctTolerance),
+             `:=`(c(import), get(reverseExport))]
+    balanced[reportingReliability < partnerReliability &
+             (abs(balanced[[export]] - balanced[[reverseImport]])/
+                  balanced[[export]]> pctTolerance),
+             `:=`(c(export), get(reverseImport))]
+    balanced
+}
+
+## balancedTrade =
+##     balanceTradeQuantity(reliabilityTrade,
+##                          import = importQuantity,
+##                          export = exportQuantity,
+##                          reverseImport = paste0("reverse_", importQuantity),
+##                          reverseExport = paste0("reverse_", exportQuantity),
+##                          reportingReliability = "reportingReliability",
+##                          partnerReliability = "partnerReliability",
+##                          pctTolerance = 0.05)
+
+
+
+calculateValue = function(data, unitValue, value, quantity){
+    updatedValue = copy(data)
+    updatedValue[!is.na(updatedValue[[value]]),
+                    `:=`(c(value), get(quantity) * get(unitValue))]
+    updatedValue    
+}
 
 x = rexp(300)
 hist(x, breaks = 100)
@@ -283,14 +356,17 @@ rawValues =
                       reimport = reimportQuantity, export = exportQuantity,
                       reexport = reexportQuantity)
 
-validUnitValue =
+mirrorData =
     rawValues %>%
     mirrorTrade(data = .,
                 reportingCountry = "reportingCountryM49",
                 partnerCountry = "partnerCountryM49",
                 reverseTradePrefix = "reverse_",
                 valueColumns = grep("Value", colnames(.), value = TRUE),
-                flagColumns = grep("flag", colnames(.), value = TRUE)) %>%
+                flagColumns = grep("flag", colnames(.), value = TRUE))        
+
+validUnitValue =
+    mirrorData %>%
     calculateUnitValue(data = .,
                        importUnitValue = importUnitValue,
                        importTradeValue = importValue,
@@ -307,25 +383,88 @@ validUnitValue =
                        exportTradeQuantity = paste0("reverse_", exportQuantity)) %>%
     validation(data = .,
                value = "Value_measuredElementTrade_5630",
-               mirrorValue = "reverse_Value_measuredElementTrade_5930") %>%
+               mirrorValue = "reverse_Value_measuredElementTrade_5930",
+               pctTolerance = 50) %>%
     validation(data = .,
                value = "Value_measuredElementTrade_5930",
-               mirrorValue = "reverse_Value_measuredElementTrade_5630")
+               mirrorValue = "reverse_Value_measuredElementTrade_5630",
+               pctTolerance = 50)
+
+
+
+
+
+write.csv(validUnitValue[, !grep("flag", colnames(validUnitValue), value = TRUE),
+                         with = FALSE],
+          file = "checkUnitValue.csv", row.names = FALSE,
+          na = "")
 
 par(mfrow = c(2, 1))
-plot(na.omit(validUnitValue[, list(Value_measuredElementTrade_5630,
-                                   reverse_Value_measuredElementTrade_5930)]))
+plot(na.omit(mirrorData[, list(Value_measuredElementTrade_5630,
+                                   reverse_Value_measuredElementTrade_5930)]),
+     col = "red", cex = 2, xlim = c(0, 10000), ylim = c(0, 10000))
+points(na.omit(validUnitValue[, list(Value_measuredElementTrade_5630,
+                                   reverse_Value_measuredElementTrade_5930)]),
+       pch = 19)
 abline(a = 0, b = 1, col = "red")
-plot(na.omit(validUnitValue[, list(Value_measuredElementTrade_5930,
-                                   reverse_Value_measuredElementTrade_5630)]))
+plot(na.omit(mirrorData[, list(Value_measuredElementTrade_5930,
+                                   reverse_Value_measuredElementTrade_5630)]),
+     col = "red", cex = 2, xlim = c(0, 10000), ylim = c(0, 10000))
+points(na.omit(validUnitValue[, list(Value_measuredElementTrade_5630,
+                                   reverse_Value_measuredElementTrade_5930)]),
+       pch = 19)
 abline(a = 0, b = 1, col = "red")
 
 balancedTrade =
-    validaUnitValue %>%
-    calculateQuantity %>%
-    calculateReliability %>%
-    balanceTradeQuantity %>%
-    calculateValue
+    validUnitValue %>%
+    calculateQuantity(data = .,
+                      unitValue = importUnitValue,
+                      value = importValue,
+                      quantity = importQuantity) %>%
+    calculateQuantity(data = .,
+                      unitValue = exportUnitValue,
+                      value = exportValue,
+                      quantity = exportQuantity) %>%
+    calculateQuantity(data = .,
+                      unitValue = paste0("reverse_", importUnitValue),
+                      value = paste0("reverse_", importValue),
+                      quantity = paste0("reverse_", importQuantity)) %>%
+    calculateQuantity(data = .,
+                      unitValue = paste0("reverse_", exportUnitValue),
+                      value = paste0("reverse_", exportValue),
+                      quantity = paste0("reverse_", exportQuantity)) %>%
+    calculateReliability(data = .,
+                         import = importQuantity,
+                         export = exportQuantity,
+                         reverseImport = paste0("reverse_", importQuantity),
+                         reverseExport = paste0("reverse_", exportQuantity),
+                         reportingCountry = "reportingCountryM49",
+                         partnerCountry = "partnerCountryM49",
+                         pctTolerance = 0.05) %>% 
+    balanceTradeQuantity(data = .,
+                         import = importQuantity,
+                         export = exportQuantity,
+                         reverseImport = paste0("reverse_", importQuantity),
+                         reverseExport = paste0("reverse_", exportQuantity),
+                         reportingReliability = "reportingReliability",
+                         partnerReliability = "partnerReliability",
+                         pctTolerance = 0.05) %>%
+    calculateValue(data = .,
+                      unitValue = importUnitValue,
+                      value = importValue,
+                      quantity = importQuantity) %>%
+    calculateValue(data = .,
+                      unitValue = exportUnitValue,
+                      value = exportValue,
+                      quantity = exportQuantity) %>%
+    calculateValue(data = .,
+                      unitValue = paste0("reverse_", importUnitValue),
+                      value = paste0("reverse_", importValue),
+                      quantity = paste0("reverse_", importQuantity)) %>%
+    calculateValue(data = .,
+                      unitValue = paste0("reverse_", exportUnitValue),
+                      value = paste0("reverse_", exportValue),
+                      quantity = paste0("reverse_", exportQuantity)) 
 
 
 
@@ -369,4 +508,7 @@ balancedTrade =
 ## NOTE (Michael): Why is the unit value of import higher than export
 ##                 when mirroring.
 ##
-
+##
+## NOTE (Michael): Looks like there is something wrong with projection.
+##
+## NOTE (Michael): The mirror function appears to be doing something wrong.
