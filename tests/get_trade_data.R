@@ -200,15 +200,16 @@ calculateUnitValue = function(data, importUnitValue, importTradeValue,
 
 
 
-validationByMirrorValue = function(value, mirrorValue, pctTolerance){
+validationByMirrorValue = function(value, mirrorValue, ratioBoundary,
+    plot = FALSE){
     pr = prcomp(~value + mirrorValue)
     slope = pr$rotation[2,1] / pr$rotation[1,1]
     intercept = pr$center[2] - slope*pr$center[1]
     valueRatio = (mirrorValue - intercept)/value
 
     ## Ratios which are outside the range.
-    badRatio = which(valueRatio > slope * (1 + pctTolerance/100) |
-                     valueRatio < slope * (1 - pctTolerance/100))
+    badRatio = which(valueRatio > slope * ratioBoundary |
+                     valueRatio < slope/ratioBoundary)
     svec = c(1, slope)
     ## projection on to the orthorgonal line
     valueBasedOnExpectedRatio  =
@@ -219,6 +220,13 @@ validationByMirrorValue = function(value, mirrorValue, pctTolerance){
     newMirrorValue = mirrorValue
     newValue[badRatio] = valueBasedOnExpectedRatio[badRatio, 1]
     newMirrorValue[badRatio] = valueBasedOnExpectedRatio[badRatio, 2] + intercept
+    if(plot){
+        plot(value, mirrorValue, pch = 19, col = "red")
+        abline(a = intercept, b = slope)
+        abline(a = intercept, b = slope * ratioBoundary, col = "red")
+        abline(a = intercept, b = slope/ratioBoundary, col = "red")        
+        points(newValue, newMirrorValue, col = "blue", pch = 19)
+    }
     ## list(intercept = intercept, slope= slope, newValue = newValue,
     ##      newMirrorValue = newMirrorValue)
     list(newValue, newMirrorValue)
@@ -226,12 +234,8 @@ validationByMirrorValue = function(value, mirrorValue, pctTolerance){
 
 ## x = 1:100 + rnorm(100, sd = 10)
 ## y = 2 + 2 * x + rnorm(100, sd = 30)
-## plot(x, y, cex = 2)
-## abline(coef = coef(lm(y ~ x)), col = "red")
-## with(validationByMirrorValue(x, y, 30),
-##      abline(a = intercept, b = slope))
-## with(validationByMirrorValue(x, y, 30),
-##      points(newValue, newMirrorValue, col = "blue", pch = 19))
+## validationByMirrorValue(value = x, mirrorValue = y, ratioBoundary = 1.5,
+##                         plot = TRUE)
 
 
 validationByRange = function(value){
@@ -245,11 +249,12 @@ validationByRange = function(value){
     newValue
 }
 
-validation = function(data, value, mirrorValue, pctTolerance = 50){
+validation = function(data, value, mirrorValue, ratioBoundary = 3, plot = FALSE){
     valid = copy(data)
     valid[, `:=`(c(value, mirrorValue),
                  validationByMirrorValue(.SD[[value]], .SD[[mirrorValue]],
-                                         pctTolerance = pctTolerance))]
+                                         ratioBoundary = ratioBoundary,
+                                         plot = plot))]
     valid[, `:=`(c(value), validationByRange(.SD[[value]]))]
     valid[, `:=`(c(mirrorValue), validationByRange(.SD[[mirrorValue]]))]
     valid
@@ -350,6 +355,13 @@ updateTradeValue = function(data, unitValue, value, quantity){
 ## with(validationByRange(log(x)), hist(exp(newValue), breaks = 100, xlim = range(x)))
 
 
+saveValidTradeData = function(data, originalData){
+    SaveData(domain = "trade", dataset = "ct_raw_tf",
+             data = data[, colnames(originalData), with = FALSE],
+             normalized = FALSE)
+}
+
+
 test = getComtradeRawData()
 load("cerealTrade.RData")
 cerealTrade[,timePointYears := as.numeric(timePointYears)]
@@ -401,11 +413,11 @@ validUnitValue =
     validation(data = .,
                value = importUnitValue,
                mirrorValue = paste0("reverse_", exportUnitValue),
-               pctTolerance = 50) %>%
+               ratioBoundary = 3) %>%
     validation(data = .,
                value = exportUnitValue,
                mirrorValue = paste0("reverse_", importUnitValue),
-               pctTolerance = 50) %>%
+               ratioBoundary = 3) %>%
     imputeUnitValue(data = .,
                     unitValue = importUnitValue,
                     mirrorUnitValue = paste0("reverse_", exportUnitValue)) %>%
@@ -467,7 +479,8 @@ balancedTrade =
     updateTradeValue(data = .,
                       unitValue = paste0("reverse_", exportUnitValue),
                       value = paste0("reverse_", exportValue),
-                      quantity = paste0("reverse_", exportQuantity)) 
+                      quantity = paste0("reverse_", exportQuantity)) %>%
+    saveValidTradeData(data = ., originalData = rawValues)
 
 
 
@@ -516,5 +529,3 @@ balancedTrade =
 ##                 everything official for now I suppose.
 ##
 ## TODO (Michael): Maybe write a wrapper for each procedure.
-##
-## TODO (Michael): fill missing unit value after validation.
