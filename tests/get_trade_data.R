@@ -7,14 +7,16 @@ suppressMessages({
 
 
 ## Setting up variables
-areaVar = "geographicAreaM49"
+reportingCountryVar = "reportingCountryM49"
+partnerCountryVar = "partnerCountryM49"
 yearVar = "timePointYears"
-itemVar = "measuredItemCPC"
-elementVar = "measuredElement"
-valuePrefix = "Value_measuredElementTrade_"
-flagObsPrefix = "flagObservationStatus_measuredElement_"
-flagMethodPrefix = "flagMethod_measuredElement_"
-
+itemVar = "measuredItemHS"
+elementVar = "measuredElementTrade"
+valuePrefix = "Value_"
+flagPrefix = "flagTrade_"
+## flagObsPrefix = "flagObservationStatus_"
+## flagMethodPrefix = "flagMethod_"
+reverseTradePrefix = "reverse_"
 
 ## Set up testing environments
 if(Sys.getenv("USER") == "mk"){
@@ -25,21 +27,30 @@ if(Sys.getenv("USER") == "mk"){
         )
 }
 
-
+## Get all reporting country codes
 allReportingCountryCode =
-    GetCodeList("trade", "ct_raw_tf", dimension = "reportingCountryM49")$code
+    GetCodeList("trade", "ct_raw_tf", dimension = reportingCountryVar)$code
+
+## Get all partner country codes
 allPartnerCountryCode =
-    GetCodeList("trade", "ct_raw_tf", dimension = "partnerCountryM49")$code
+    GetCodeList("trade", "ct_raw_tf", dimension = partnerCountryVar)$code
+
+## Get Item codes
+##
+## NOTE (Michael): Working with cereals for now.
+
 ## allItemCode =
 ##     GetCodeList("trade", "ct_raw_tf", dimension = "measuredItemHS")$code
 
 cerealItemCode =
-    adjacent2edge(GetCodeTree("trade", "ct_raw_tf",
-                              dimension = "measuredItemHS"))[parent == "10",
-                                  children]
+    adjacent2edge(
+        GetCodeTree("trade", "ct_raw_tf", dimension = itemVar)
+    )[parent == "10", children]
 
 
-## NOTE (Michael): Lets work with elements first, then expand them
+## Get relevant element codes and set names
+##
+## NOTE (Michael): Lets work with set elements first, then expand them
 ##                 when we have the formula table.
 
 allElementCodes = GetCodeList("trade", "ct_raw_tf", "measuredElementTrade")
@@ -49,75 +60,90 @@ elementCodeName = c("importQuantity", "reimportQuantity", "importValue",
     "reimportValue", "importUnitValue", "exportQuantity", "reexportQuantity",
     "exportValue", "reexportValue", "exportUnitValue")
 
-## assign name for convinience
+## assign name globally for convinience
 mapply(FUN = function(name, colname){
     assign(x = name, value = colname, envir = .GlobalEnv)
-}, name = elementCodeName, colname = paste0(valuePrefix, elementCode))
+}, name = elementCodeName,
+       colname = paste0(valuePrefix, elementVar, "_", elementCode))
 
+## TODO (Michael): Need to do one for reverse trade
+
+## Get all relevant years.
 allYears = as.character(1990:2013)
 
 
+getComtradeRawData = function(){
+    dimensions =
+        list(Dimension(name = "reportingCountryM49",
+                       keys = allReportingCountryCode),
+             Dimension(name = "partnerCountryM49", keys = allPartnerCountryCode),
+             Dimension(name = "measuredItemHS", keys = cerealItemCode),
+             Dimension(name = "measuredElementTrade", keys = elementCode),
+             Dimension(name = "timePointYears", keys = allYears))
 
-dimensions =
-    list(Dimension(name = "reportingCountryM49", keys = allReportingCountryCode),
-         Dimension(name = "partnerCountryM49", keys = allPartnerCountryCode),
-         Dimension(name = "measuredItemHS", keys = cerealItemCode),
-         Dimension(name = "measuredElementTrade", keys = elementCode),
-         Dimension(name = "timePointYears", keys = allYears))
+    newKey = DatasetKey(domain = "trade", dataset = "ct_raw_tf",
+        dimensions = dimensions)
 
-newKey = DatasetKey(domain = "trade", dataset = "ct_raw_tf",
-    dimensions = dimensions)
+    newPivot = c(
+        Pivoting(code = "reportingCountryM49", ascending = TRUE),
+        Pivoting(code = "partnerCountryM49", ascending = TRUE),
+        Pivoting(code = "measuredItemHS", ascending = TRUE),
+        Pivoting(code = "timePointYears", ascending = FALSE),
+        Pivoting(code = "measuredElementTrade", ascending = TRUE)
+    )
 
-newPivot = c(
-    Pivoting(code = "reportingCountryM49", ascending = TRUE),
-    Pivoting(code = "partnerCountryM49", ascending = TRUE),
-    Pivoting(code = "measuredItemHS", ascending = TRUE),
-    Pivoting(code = "timePointYears", ascending = FALSE),
-    Pivoting(code = "measuredElementTrade", ascending = TRUE)
-)
+    comtradeRaw = GetData(key = newKey, normalized = FALSE, pivoting = newPivot)
+    comtradeRaw[,timePointYears := as.numeric(timePointYears)]
+    setkeyv(comtradeRaw, cols = c("reportingCountryM49", "partnerCountryM49",
+                             "measuredItemHS", "timePointYears"))
+    ## NOTE (Michael): The meta data shows which procedure was done to
+    ##                 obtain the value. This is replaced by flag
 
-cerealTrade = GetData(key = newKey, normalized = FALSE, pivoting = newPivot)
-cerealTrade[,timePointYears := as.numeric(timePointYears)]
-setkeyv(cerealTrade, cols = c("reportingCountryM49", "partnerCountryM49",
-                         "measuredItemHS", "timePointYears"))
-## NOTE (Michael): The meta data shows which procedure was done to
-##                 obtain the value. This is replaced by flag
+    comtradeRaw[, `:=`(c(grep(valuePrefix, colnames(comtradeRaw), value = TRUE)),
+                       lapply(c(grep(valuePrefix, colnames(comtradeRaw),
+                                     value = TRUE)),
+                              FUN = function(x) as.numeric(.SD[[x]])))]
+    comtradeRaw
+}
 
-cerealTrade[, `:=`(c(grep(valuePrefix, colnames(cerealTrade), value = TRUE)),
-                   lapply(c(grep(valuePrefix, colnames(cerealTrade),
-                                 value = TRUE)),
-                          FUN = function(x) as.numeric(.SD[[x]])))]
-
-
-addRetradeToTrade = function(data, import, reimport, export, reexport){
-    missingCol = setdiff(c(import, reimport, export, reexport), colnames(data))
+addRetradeToTrade = function(data, importQuantity, reimportQuantity,
+    exportQuantity, reexportQuantity, importValue, reimportValue,
+    exportValue, reexportValue){
+    missingCol =
+        setdiff(c(importQuantity, reimportQuantity, exportQuantity,
+                  reexportQuantity, importValue, reimportValue, exportValue,
+                  reexportValue),
+                colnames(data))
     if(length(missingCol) > 0)
         data[, `:=`(c(missingCol), as.numeric(NA))]
-    data[, `:=`(c(import, export),
-                list(ifelse(apply(is.na(.SD[, c(import, reimport), with = FALSE]),
-                                  1, all), NA,
-                            rowSums(.SD[, c(import, reimport), with = FALSE],
-                                    na.rm=TRUE)),
-                     ifelse(apply(is.na(.SD[, c(export, reexport), with = FALSE]),
-                                  1, all), NA,
-                            rowSums(.SD[, c(export, reexport), with = FALSE],
-                                    na.rm=TRUE))))]
-    data[, `:=`(c(reimport, reexport), NA)]
+    data[, `:=`(c(importQuantity, exportQuantity, importValue, exportValue),
+                list(ifelse(apply(is.na(.SD[, c(importQuantity, reimportQuantity),
+                                            with = FALSE]), 1, all), NA,
+                            rowSums(.SD[, c(importQuantity, reimportQuantity),
+                                        with = FALSE], na.rm = TRUE)),
+                     ifelse(apply(is.na(.SD[, c(exportQuantity, reexportQuantity),
+                                            with = FALSE]), 1, all), NA,
+                            rowSums(.SD[, c(exportQuantity, reexportQuantity),
+                                        with = FALSE], na.rm = TRUE)),
+                     ifelse(apply(is.na(.SD[, c(importValue, reimportValue),
+                                            with = FALSE]), 1, all), NA,
+                            rowSums(.SD[, c(importValue, reimportValue),
+                                        with = FALSE], na.rm = TRUE)),
+                     ifelse(apply(is.na(.SD[, c(exportValue, reexportValue),
+                                            with = FALSE]), 1, all), NA,
+                            rowSums(.SD[, c(exportValue, reexportValue),
+                                        with = FALSE], na.rm = TRUE))))]
+    data[, `:=`(c(reimportQuantity, reexportQuantity,
+                  reimportValue, reexportValue), NA)]
     ## NOTE (Michael): What do we do with the retrades in the data base?
     data
 }
-
-addRetradeToTrade(cerealTrade, import = importQuantity,
-                  reimport = reimportQuantity, export = exportQuantity,
-                  reexport = reexportQuantity)
 
 
 removeSelfTrade = function(data, reportingCountry, partnerCountry){
     noSelfTrade = data[which(data[[reportingCountry]] != data[[partnerCountry]]), ]
     noSelfTrade
 }
-removeSelfTrade(cerealTrade, "reportingCountryM49", "partnerCountryM49")
-
 
 
 removeInconsistentQuantityValue = function(data, quantity, value){
@@ -128,14 +154,6 @@ removeInconsistentQuantityValue = function(data, quantity, value){
     data
 }
 
-removeInconsistentQuantityValue(data = cerealTrade,
-                                quantity = "Value_measuredElementTrade_5601",
-                                value = "Value_measuredElementTrade_5621")
-
-removeInconsistentQuantityValue(data = cerealTrade,
-                                quantity = "Value_measuredElementTrade_5901",
-                                value = "Value_measuredElementTrade_5921")
-
 
 mirrorTrade = function(data, reportingCountry, partnerCountry, reverseTradePrefix,
                        valueColumns, flagColumns){
@@ -144,26 +162,18 @@ mirrorTrade = function(data, reportingCountry, partnerCountry, reverseTradePrefi
 
     reverseReportingName = paste0(reverseTradePrefix, reportingCountry)
     reversePartnerName = paste0(reverseTradePrefix, partnerCountry)
-
     setnames(tmp, old = c(reportingCountry, partnerCountry),
              new = c(reverseReportingName, reversePartnerName))
-
+    
     base[, `:=`(c(reverseReportingName, reversePartnerName),
                 list(.SD[[partnerCountry]], .SD[[reportingCountry]]))]
 
     setnames(tmp, old = valueColumns,
              new = paste0(reverseTradePrefix, valueColumns))
 
-    ## print(str(base))
-    ## print(str(tmp))
-    ## print(flagColumns)
-    ## print(intersect(colnames(base), colnames(tmp)))
     mirroredTrade = merge(base, tmp,
         by = intersect(colnames(base), colnames(tmp)), all = TRUE)
-    ## print(str(mirroredTrade))
     ## Fill in the missing trade country name
-    ## print(reportingCountry)
-    ## print(partnerCountry)
     ## mirroredTrade[is.na(.SD[[reportingCountry]]),
     ##             `:=`(c(reportingCountry), get(reversePartnerName))]
     ## mirroredTrade[is.na(.SD[[partnerCountry]]),
@@ -172,20 +182,6 @@ mirrorTrade = function(data, reportingCountry, partnerCountry, reverseTradePrefi
     ##                 is symmetrical for validation.
     mirroredTrade
 }
-
-mirroredTrade =
-    mirrorTrade(data = cerealTrade,
-                reportingCountry = "reportingCountryM49",
-                partnerCountry = "partnerCountryM49",
-                reverseTradePrefix = "reverse_",
-                valueColumns = grep("Value_", colnames(cerealTrade), value = TRUE))
-
-
-write.csv(mirroredTrade[, !grep("flag", colnames(mirroredTrade)), with = FALSE],
-          file = "checkFormat.csv", na = "", row.names = FALSE)
-
-## Function addRetradeToTrade and removeSelfTrade reproduces
-## fun.MX.PRELIMS. The hard code are not replicated.
 
 calculateUnitValue = function(data, importUnitValue, importTradeValue,
     importTradeQuantity, exportUnitValue, exportTradeValue, exportTradeQuantity){
@@ -201,8 +197,6 @@ calculateUnitValue = function(data, importUnitValue, importTradeValue,
                              get(exportTradeQuantity))))]
     data
 }
-calculateUnitValue(cerealTrade, importUnitValue, importValue, importQuantity,
-                   exportUnitValue, exportValue, exportQuantity)
 
 
 
@@ -230,25 +224,25 @@ validationByMirrorValue = function(value, mirrorValue, pctTolerance){
     list(newValue, newMirrorValue)
 }
 
-x = 1:100 + rnorm(100, sd = 10)
-y = 2 + 2 * x + rnorm(100, sd = 30)
-plot(x, y, cex = 2)
-abline(coef = coef(lm(y ~ x)), col = "red")
-with(validationByMirrorValue(x, y, 30),
-     abline(a = intercept, b = slope))
-with(validationByMirrorValue(x, y, 30),
-     points(newValue, newMirrorValue, col = "blue", pch = 19))
+## x = 1:100 + rnorm(100, sd = 10)
+## y = 2 + 2 * x + rnorm(100, sd = 30)
+## plot(x, y, cex = 2)
+## abline(coef = coef(lm(y ~ x)), col = "red")
+## with(validationByMirrorValue(x, y, 30),
+##      abline(a = intercept, b = slope))
+## with(validationByMirrorValue(x, y, 30),
+##      points(newValue, newMirrorValue, col = "blue", pch = 19))
 
 
 validationByRange = function(value){
-    newValue = log(value)
+    newValue = value
     q = quantile(value, probs = c(0.25, 0.75), na.rm = TRUE)
     min = q[1] - 1.5 * diff(q)
     max = q[2] + 1.5 * diff(q)
     badValue = which(value > max | value < min)
     newValue[badValue] = median(newValue[-badValue], na.rm = TRUE)
     ## list(value = value, newValue = newValue)
-    exp(newValue)
+    newValue
 }
 
 validation = function(data, value, mirrorValue, pctTolerance = 50){
@@ -261,19 +255,31 @@ validation = function(data, value, mirrorValue, pctTolerance = 50){
     valid
 }
 
+imputeUnitValue = function(data, unitValue, mirrorUnitValue){
+    imputed = copy(data)
+    imputed[is.na(imputed[[unitValue]]) & !is.na(imputed[[mirrorUnitValue]]),
+            `:=`(c(unitValue), .SD[[mirrorUnitValue]])]
+    imputed[is.na(imputed[[mirrorUnitValue]]) & !is.na(imputed[[unitValue]]),
+            `:=`(c(mirrorUnitValue), .SD[[unitValue]])]
+    imputed[is.na(imputed[[mirrorUnitValue]]),
+            `:=`(c(mirrorUnitValue), median(.SD[[mirrorUnitValue]], na.rm = TRUE))]
+    imputed[is.na(imputed[[unitValue]]),
+            `:=`(c(unitValue), median(.SD[[unitValue]], na.rm = TRUE))]
+    imputed
+}
 
-
-calculateQuantity = function(data, unitValue, value, quantity){
-    updatedQuantity = copy(data)
-    updatedQuantity[!is.na(updatedQuantity[[quantity]]),
+updateTradeQuantity = function(data, unitValue, value, quantity){
+    updatedTradeQuantity = copy(data)
+    updatedTradeQuantity[!is.na(updatedTradeQuantity[[quantity]]),
                     `:=`(c(quantity), get(value)/get(unitValue))]
-    updatedQuantity    
+    updatedTradeQuantity    
 }
 
 
 calculateReliability = function(data, import, export, reverseImport,
     reverseExport, reportingCountry, partnerCountry, pctTolerance){
 
+    ## TODO (Michael): Discard worst discrepancy
     reliability =
         data[, (sum(abs(.SD[[import]] - .SD[[reverseExport]])/
                         .SD[[import]] <= pctTolerance, na.rm = TRUE) +
@@ -328,42 +334,53 @@ balanceTradeQuantity = function(data, import, export, reverseImport, reverseExpo
 
 
 
-calculateValue = function(data, unitValue, value, quantity){
-    updatedValue = copy(data)
-    updatedValue[!is.na(updatedValue[[value]]),
+updateTradeValue = function(data, unitValue, value, quantity){
+    updatedTradeValue = copy(data)
+    updatedTradeValue[!is.na(updatedTradeValue[[value]]),
                     `:=`(c(value), get(quantity) * get(unitValue))]
-    updatedValue    
+    updatedTradeValue    
 }
 
-x = rexp(300)
-hist(x, breaks = 100)
-with(validationByRange(x), plot(value, newValue))
+## x = rexp(300)
+## hist(x, breaks = 100)
+## with(validationByRange(x), plot(value, newValue))
 
-par(mfrow = c(2, 1))
-hist(log(x), breaks = 100)
-with(validationByRange(log(x)), hist(exp(newValue), breaks = 100, xlim = range(x)))
+## par(mfrow = c(2, 1))
+## hist(log(x), breaks = 100)
+## with(validationByRange(log(x)), hist(exp(newValue), breaks = 100, xlim = range(x)))
+
+
+test = getComtradeRawData()
+load("cerealTrade.RData")
+cerealTrade[,timePointYears := as.numeric(timePointYears)]
 
 
 rawValues =
     cerealTrade %>%
-    removeSelfTrade(data = ., reportingCountry = "reportingCountryM49",
-                    partnerCountry = "partnerCountryM49") %>%
+    removeSelfTrade(data = ., reportingCountry = reportingCountryVar,
+                    partnerCountry = partnerCountryVar) %>%
     removeInconsistentQuantityValue(data = ., quantity = importQuantity,
                                     value = importValue) %>%
     removeInconsistentQuantityValue(data = ., quantity = exportQuantity,
                                     value = exportValue) %>% 
-    addRetradeToTrade(data = ., import = importQuantity,
-                      reimport = reimportQuantity, export = exportQuantity,
-                      reexport = reexportQuantity)
+    addRetradeToTrade(data = .,
+                      importQuantity = importQuantity,
+                      reimportQuantity = reimportQuantity,
+                      exportQuantity = exportQuantity,
+                      reexportQuantity = reexportQuantity,
+                      importValue = importValue,
+                      reimportValue = reimportValue,
+                      exportValue = exportValue,
+                      reexportValue = reexportValue)
 
 mirrorData =
     rawValues %>%
     mirrorTrade(data = .,
-                reportingCountry = "reportingCountryM49",
-                partnerCountry = "partnerCountryM49",
-                reverseTradePrefix = "reverse_",
-                valueColumns = grep("Value", colnames(.), value = TRUE),
-                flagColumns = grep("flag", colnames(.), value = TRUE))        
+                reportingCountry = reportingCountryVar,
+                partnerCountry = partnerCountryVar,
+                reverseTradePrefix = reverseTradePrefix,
+                valueColumns = grep(valuePrefix, colnames(.), value = TRUE),
+                flagColumns = grep(flagPrefix, colnames(.), value = TRUE))
 
 validUnitValue =
     mirrorData %>%
@@ -382,54 +399,38 @@ validUnitValue =
                        exportTradeValue = paste0("reverse_", exportValue),
                        exportTradeQuantity = paste0("reverse_", exportQuantity)) %>%
     validation(data = .,
-               value = "Value_measuredElementTrade_5630",
-               mirrorValue = "reverse_Value_measuredElementTrade_5930",
+               value = importUnitValue,
+               mirrorValue = paste0("reverse_", exportUnitValue),
                pctTolerance = 50) %>%
     validation(data = .,
-               value = "Value_measuredElementTrade_5930",
-               mirrorValue = "reverse_Value_measuredElementTrade_5630",
-               pctTolerance = 50)
+               value = exportUnitValue,
+               mirrorValue = paste0("reverse_", importUnitValue),
+               pctTolerance = 50) %>%
+    imputeUnitValue(data = .,
+                    unitValue = importUnitValue,
+                    mirrorUnitValue = paste0("reverse_", exportUnitValue)) %>%
+    imputeUnitValue(data = .,
+                    unitValue = exportUnitValue,
+                    mirrorUnitValue = paste0("reverse_", importUnitValue))
+                        
 
 
-
-
-
-write.csv(validUnitValue[, !grep("flag", colnames(validUnitValue), value = TRUE),
-                         with = FALSE],
-          file = "checkUnitValue.csv", row.names = FALSE,
-          na = "")
-
-par(mfrow = c(2, 1))
-plot(na.omit(mirrorData[, list(Value_measuredElementTrade_5630,
-                                   reverse_Value_measuredElementTrade_5930)]),
-     col = "red", cex = 2, xlim = c(0, 10000), ylim = c(0, 10000))
-points(na.omit(validUnitValue[, list(Value_measuredElementTrade_5630,
-                                   reverse_Value_measuredElementTrade_5930)]),
-       pch = 19)
-abline(a = 0, b = 1, col = "red")
-plot(na.omit(mirrorData[, list(Value_measuredElementTrade_5930,
-                                   reverse_Value_measuredElementTrade_5630)]),
-     col = "red", cex = 2, xlim = c(0, 10000), ylim = c(0, 10000))
-points(na.omit(validUnitValue[, list(Value_measuredElementTrade_5630,
-                                   reverse_Value_measuredElementTrade_5930)]),
-       pch = 19)
-abline(a = 0, b = 1, col = "red")
 
 balancedTrade =
     validUnitValue %>%
-    calculateQuantity(data = .,
+    updateTradeQuantity(data = .,
                       unitValue = importUnitValue,
                       value = importValue,
                       quantity = importQuantity) %>%
-    calculateQuantity(data = .,
+    updateTradeQuantity(data = .,
                       unitValue = exportUnitValue,
                       value = exportValue,
                       quantity = exportQuantity) %>%
-    calculateQuantity(data = .,
+    updateTradeQuantity(data = .,
                       unitValue = paste0("reverse_", importUnitValue),
                       value = paste0("reverse_", importValue),
                       quantity = paste0("reverse_", importQuantity)) %>%
-    calculateQuantity(data = .,
+    updateTradeQuantity(data = .,
                       unitValue = paste0("reverse_", exportUnitValue),
                       value = paste0("reverse_", exportValue),
                       quantity = paste0("reverse_", exportQuantity)) %>%
@@ -449,66 +450,71 @@ balancedTrade =
                          reportingReliability = "reportingReliability",
                          partnerReliability = "partnerReliability",
                          pctTolerance = 0.05) %>%
-    calculateValue(data = .,
+    updateTradeValue(data = .,
                       unitValue = importUnitValue,
                       value = importValue,
                       quantity = importQuantity) %>%
-    calculateValue(data = .,
+    updateTradeValue(data = .,
                       unitValue = exportUnitValue,
                       value = exportValue,
                       quantity = exportQuantity) %>%
-    calculateValue(data = .,
+    ## NOTE (Michael): Calculation of the revser is probably not
+    ##                 required, since they will be discarded.
+    updateTradeValue(data = .,
                       unitValue = paste0("reverse_", importUnitValue),
                       value = paste0("reverse_", importValue),
                       quantity = paste0("reverse_", importQuantity)) %>%
-    calculateValue(data = .,
+    updateTradeValue(data = .,
                       unitValue = paste0("reverse_", exportUnitValue),
                       value = paste0("reverse_", exportValue),
                       quantity = paste0("reverse_", exportQuantity)) 
 
 
 
-## Function calculateUnitValue reproduces fun.MX.BASICVAL
+
+
+## write.csv(validUnitValue[, !grep("flag", colnames(validUnitValue), value = TRUE),
+##                          with = FALSE],
+##           file = "checkUnitValue.csv", row.names = FALSE,
+##           na = "")
+
+## par(mfrow = c(2, 1))
+## plot(na.omit(mirrorData[, list(Value_measuredElementTrade_5630,
+##                                    reverse_Value_measuredElementTrade_5930)]),
+##      col = "red", cex = 2, xlim = c(0, 10000), ylim = c(0, 10000))
+## points(na.omit(validUnitValue[, list(Value_measuredElementTrade_5630,
+##                                    reverse_Value_measuredElementTrade_5930)]),
+##        pch = 19)
+## abline(a = 0, b = 1, col = "red")
+## plot(na.omit(mirrorData[, list(Value_measuredElementTrade_5930,
+##                                    reverse_Value_measuredElementTrade_5630)]),
+##      col = "red", cex = 2, xlim = c(0, 10000), ylim = c(0, 10000))
+## points(na.omit(validUnitValue[, list(Value_measuredElementTrade_5630,
+##                                    reverse_Value_measuredElementTrade_5930)]),
+##        pch = 19)
+## abline(a = 0, b = 1, col = "red")
 
 
 
 
-## NOTE (Michael): Why does the fun.MX.RAWVAL has an aggregation over
-##                 the key, where does the duplicate transaction come
-##                 from?
-##
-## NOTE (Michael): Why are quantity codes 1 and 8 aggregated?
-##
-## NOTE (Michael): The calculation of x_tol on line 19 is wrong in
-##                 fun.MX.BASICVAL. You can not calculate the ratio of
-##                 two sum when the set are different. They should be
-##                 indexedx, take the ratio then average it.
-##
-## NOTE (Michael): Same as above for the mean from line 44 to 55 in
-##                 fun.MX.BASICVAL.
-##
-## NOTE (Michael): The replacement of non-finite value on line 60 and
-##                 61, should be removed and corrected. If the unit
-##                 value is infinite, this implies the quantity is
-##                 zero. Maybe the value should be set as zero as well
-##                 while the unitvalue is NA. If the value is
-##                 non-zero, maybe correct the value.
-##
-## NOTE (Michael): There are duplicate in the assignment of
-##                 mean.UN_M. The subset is different, the first one
-##                 takes the consistent set while the second while
-##                 took the original set but with NW greater than the
-##                 threshhold MINq.
-##
-## NOTE (Michael): Whether the original value existed was not checked
-##                 before replacement.
-##
-## NOTE (Michael): What are country codes zero? Unspecified?
-##
-## NOTE (Michael): Why is the unit value of import higher than export
-##                 when mirroring.
-##
-##
+
+
+
 ## NOTE (Michael): Looks like there is something wrong with projection.
 ##
-## NOTE (Michael): The mirror function appears to be doing something wrong.
+## NOTE (Michael): Double check the mirror function, it appears to be
+##                 doing something wrong.
+##
+## TODO (Michael): Remove hard coded names.
+##
+## TODO (Michael): Make names more meaningful, the tolerance should be
+##                 specific to each function such as unit value
+##                 tolerance and quantity tolerance. Further, value
+##                 should be trade value etc.
+##
+## TODO (Michael): Need to think about flags, we can just make
+##                 everything official for now I suppose.
+##
+## TODO (Michael): Maybe write a wrapper for each procedure.
+##
+## TODO (Michael): fill missing unit value after validation.
