@@ -174,6 +174,10 @@ mirrorTrade = function(data, reportingCountry, partnerCountry, reverseTradePrefi
     mirroredTrade = merge(base, tmp,
         by = intersect(colnames(base), colnames(tmp)), all = TRUE)
     ## Fill in the missing trade country name
+    mirroredTrade[is.na(get(reportingCountry)),
+                  `:=`(c(reportingCountry), get(reversePartnerName))]
+    mirroredTrade[is.na(get(partnerCountry)),
+                  `:=`(c(partnerCountry), get(reverseReportingName))]    
     ## mirroredTrade[is.na(.SD[[reportingCountry]]),
     ##             `:=`(c(reportingCountry), get(reversePartnerName))]
     ## mirroredTrade[is.na(.SD[[partnerCountry]]),
@@ -356,19 +360,22 @@ updateTradeValue = function(data, unitValue, value, quantity){
 
 
 saveValidTradeData = function(data, originalData){
+    validatedData = data[, colnames(originalData), with = FALSE]
+    validatedData[, timePointYears := as.character(timePointYears)]
     SaveData(domain = "trade", dataset = "ct_raw_tf",
-             data = data[, colnames(originalData), with = FALSE],
+             data = validatedData,
              normalized = FALSE)
 }
 
 
-test = getComtradeRawData()
-load("cerealTrade.RData")
-cerealTrade[,timePointYears := as.numeric(timePointYears)]
+## test = getComtradeRawData()
+## load("cerealTrade.RData")
+## cerealTrade[,timePointYears := as.numeric(timePointYears)]
 
+rawValues = getComtradeRawData() 
 
-rawValues =
-    cerealTrade %>%
+processedValues =
+    rawValues %>%
     removeSelfTrade(data = ., reportingCountry = reportingCountryVar,
                     partnerCountry = partnerCountryVar) %>%
     removeInconsistentQuantityValue(data = ., quantity = importQuantity,
@@ -386,7 +393,7 @@ rawValues =
                       reexportValue = reexportValue)
 
 mirrorData =
-    rawValues %>%
+    processedValues %>%
     mirrorTrade(data = .,
                 reportingCountry = reportingCountryVar,
                 partnerCountry = partnerCountryVar,
@@ -485,7 +492,6 @@ balancedTrade =
 
 
 
-
 ## write.csv(validUnitValue[, !grep("flag", colnames(validUnitValue), value = TRUE),
 ##                          with = FALSE],
 ##           file = "checkUnitValue.csv", row.names = FALSE,
@@ -529,3 +535,7 @@ balancedTrade =
 ##                 everything official for now I suppose.
 ##
 ## TODO (Michael): Maybe write a wrapper for each procedure.
+##
+## TODO (Michael): Need to split the process by item.
+##
+## TODO (Michael): Need to map HS to CPC.
