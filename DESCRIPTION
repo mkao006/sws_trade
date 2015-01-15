@@ -1,0 +1,16 @@
+Package: faoswsTrade
+Type: Package
+Title: Package to validate and mirror trade data from UNSD comtrade
+Version: 0.1.0
+Date: 2015-01-15
+Authors@R: c(person("Micheal. C. J.", "Kao", role = c("aut", "cre"), email = "michael.kao@fao.org"))
+Author: Michael. C. J. Kao <michael.kao@fao.org>
+Maintainer: Michael. C. J. Kao <michael.kao@fao.org>
+Description: This package provides functions to validate and mirror trade data from UNSD comtrade.
+License: GPL (>= 3)
+LazyData: yes
+Import:
+    data.table (>= 1.9.2)
+ZipData: no
+VignetteBuilder: knitr	
+Suggests: knitr, ggplot2
