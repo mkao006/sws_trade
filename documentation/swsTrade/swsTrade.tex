@@ -1,0 +1,176 @@
+\documentclass[nojss]{jss}
+\usepackage{url}
+\usepackage[sc]{mathpazo}
+\usepackage{geometry}
+\geometry{verbose,tmargin=2.5cm,bmargin=2.5cm,lmargin=2.5cm,rmargin=2.5cm}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{2}
+\usepackage{breakurl}
+\usepackage{hyperref}
+\usepackage[ruled, vlined]{algorithm2e}
+\usepackage{mathtools}
+\usepackage{draftwatermark}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{mathrsfs}
+\usepackage{multirow}
+%% \usepackage{mathbbm}
+\DeclareMathOperator{\sgn}{sgn}
+\DeclareMathOperator*{\argmax}{\arg\!\max}
+
+
+
+
+\title{\bf Trade Processing with faoswsTrade}
+
+\author{Michael. C. J. Kao\\ Food and Agriculture Organization \\ of
+  the United Nations}
+
+\Plainauthor{Michael. C. J. Kao} 
+
+\Plaintitle{Trade Mirroring and Validation}
+
+\Shorttitle{Trade Mirroring and Validation}
+
+\Abstract{ 
+
+  This manual provides the user with basic understanding of the
+  functionality and the processing of trade data supported by the
+  \pkg{faoswsTrade} package.
+
+
+  The trade procedure consists of three steps, preprocessing and
+  mirroring, conslidation and validation.
+
+  
+}
+
+\Keywords{}
+\Plainkeywords{}
+
+\Address{
+  Michael. C. J. Kao\\
+  Economics and Social Statistics Division (ESS)\\
+  Economic and Social Development Department (ES)\\
+  Food and Agriculture Organization of the United Nations (FAO)\\
+  Viale delle Terme di Caracalla 00153 Rome, Italy\\
+  E-mail: \email{michael.kao@fao.org}\\
+  URL: \url{https://github.com/mkao006/sws_flag}
+}
+
+
+\begin{document}
+
+\section{Introduction}
+
+
+
+\section{Modules}
+
+
+\subsection{Pre-processing and Mirroring}
+
+The initial step is to first clean any non-sensical data and perform
+completion via mirroring. The processing of mirroring ensures that
+un-reported trade are recorded whenever trading partner has reported
+them.
+
+The specific steps are listed below, we begin with the unprocessed
+Comtrade raw data.
+
+\begin{enumerate}
+  \item Remove Self-trade.
+  \item Remove inconsistent quantity, value pairs.
+  \item Add re-trade to trade.
+  \item Mirrored the data according to trading partner.
+  \item Calculate unit value.
+\end{enumerate}
+
+\subsection{Consolidation}
+
+After the data has been mirrored, we consolidated the data for the use
+of the Food Balance Sheet.
+
+In response to the request of team B and C, the values are not
+balanced at this step. 
+
+\begin{enumerate}
+  \item Consolidated the data by aggregating according to reporting
+    country and commodity by year.
+  \item The country code is translated from Comtrade speciic M49
+    system to the standard M49.
+\end{enumerate}
+
+
+\subsection{Validation}
+The values from the completed trade flow are validated according to
+the following rules. The rules are only applied to unit values, as no
+rules are deem acceptable for quantity and values.
+
+\begin{enumerate}
+  \item Validation by mirrored value
+  \item Validation by range - only for Primary commodities excluding livestock.
+\end{enumerate}
+
+
+\subsection{Balancing}
+
+After the data has been validated, we create the balanced trade flow
+for modelling purposes.
+
+\begin{enumerate}
+  \item Compute trade quantity wherever possible.
+  \item Compute reliability index based solely on non-mirrored data.
+  \item Update trade quantity based on reliability index.
+  \item Update trade value based on quantity and unit value.
+\end{enumerate}
+
+
+
+
+%% \section{The algorithm}
+
+
+%% The algortihm proceed as below
+%% \begin{itemize}
+%%   \item Mirror step:
+%%   \begin{enumerate}
+%%     \item Remove self trade
+%%     \item Remove inconsistent trade quantity and value
+%%     \item Add re-trade value and quantity to trade value and quantity
+%%     \item Mirror trade value and quantity
+%%     \item Calculate unit value
+%%     \item Write mirrored data back to the data base as mirrored version
+%%   \end{enumerate}
+%%   \item Validation step:
+%%   \begin{enumerate}
+%%     \item Validate unit value by mirror value
+%%     \item Validate unit value by range
+%%     \item Calculate missing trade quantity if trade value and trade unit value exist
+%%     \item Calculate reliability index
+%%     \item Overwrite inconsistent trade quantity by reliability index
+%%     \item Recalculate trade value based on trade quantity and trade unit value.
+%%     \item Write validated data back to the data base as validated version.    
+%%   \end{enumerate}
+%%   \item Consolidation step:
+%%   \begin{enumerate}
+%%     \item Aggregation the trade quantity and value by reporting country.
+%%   \end{enumerate}
+%% \end{itemize}
+  
+
+
+%% Problems:
+
+%% \begin{itemize}
+%%   \item How to calculate the reliability index based only on
+%%     non-mirrored value.
+%%   \item How should the selection be if the reliability index is tied
+%%     between two countries.
+%%   \item Need to double check the validation of unit value by mirror
+%%     function.
+%% \end{itemize}
+
+
+
+\end{document}
