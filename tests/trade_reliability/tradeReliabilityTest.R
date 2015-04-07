@@ -92,16 +92,15 @@ tradeConcordance =
                                  mirroredFlag = "m",
                                  tolerance = 0)
 
-pdf(file = "graph.pdf", width = 30, height = 30)
+
 tradeReliability =
     tradeConcordance %>%
     calculateReliability(data = .,
                          reportingCountry = "reportingCountryM49",
                          partnerCountry = "partnerCountryM49",
                          year = "timePointYears",
-                         concordance = "concordance",
-                         plot = TRUE)
-graphics.off()
+                         concordance = "concordance")
+
 
 
 countryList =
@@ -110,5 +109,6 @@ countryList =
 setnames(countryList, "code", "geographicAreaM49")
 check = merge(tradeReliability, countryList, by = "geographicAreaM49",
     all.x = TRUE)
-check = check[order(reliability), ]
+check = check[order(reliability),
+    list(geographicAreaM49, reliability, description)]
 print(check, nrow = 229)
